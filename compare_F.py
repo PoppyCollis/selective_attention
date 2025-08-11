@@ -54,7 +54,6 @@ def structural_inference(x, p_s_phi, mus, sigmas):
     
     
 def perceptual_inference(x, phi_star, mus, sigmas):
-    
     """
     Conditional perceptual inference to find the posterior probability of the 
     (reduced number of) latent states.
@@ -64,9 +63,7 @@ def perceptual_inference(x, phi_star, mus, sigmas):
     """
     
     likelihoods = norm.pdf(x, loc=mus, scale=sigmas)
-    
-    print(likelihoods)
-    
+        
     # use φ* as a binary mask to pick out relevant Gaussians
     reduced_likelihoods = likelihoods[phi_star.astype(bool)]
     
@@ -77,7 +74,37 @@ def perceptual_inference(x, phi_star, mus, sigmas):
     
     return posterior, map_idx
     
+def complexity(q, p):
+    """
+    Complexity is the KL-divergence between the posterior q and prior p
     
+    Σ_s Q(s) ln (q(s) / p(s))
+    """
+    
+    eps = 1e-9
+    # check valid probability distributions with tolerance
+    if not (np.isclose(q.sum(), 1, atol=eps) and np.isclose(p.sum(), 1, atol=eps)):
+        raise ValueError("q and p not valid probabilities. Each must sum to 1.")
+    
+    # avoid log(0) issues
+    q = np.clip(q, eps, 1)
+    p = np.clip(p, eps, 1)
+    
+    ln_q_p = np.log(q/p)
+    complexity = np.dot(q, ln_q_p)
+    
+    return float(complexity)
+
+def accuracy(q, p_x_s):
+    """
+    Accuracy is the expected log likelihood of the data given the posterior q
+    """
+    eps = 1e-9 # avoid log(0)
+    acc = np.dot(q, np.log(p_x_s + eps))
+    return float(acc)
+
+
+
     
 def main():
     
@@ -85,87 +112,113 @@ def main():
     
     # number of latent states
     k = 3
+    reduced_k = 2
     
     # generate all structural likelihoods p(s|φ) for k latents
     p_s_phis = generate_p_s_phis(k)
     
     # pick out a single structural likelihood to use
-    p_s_phi = p_s_phis[2]
+    p_s_phi = p_s_phis[reduced_k]
     
+    prior_full = np.ones(k,) /k # flat prior over full state posterior    
+    prior_red = np.ones(reduced_k,) /reduced_k
+    
+    full_posteriors = []
+    reduced_posteriors = []
+    Fs_full = [] # Free energies
+    Cs_full = [] # Complexity
+    As_full = [] # Accuracy
+    
+    Fs_red = [] # Free energies
+    Cs_red = [] # Complexity
+    As_red = [] # Accuracy
     
     # x = 0.5 # observation
     xs = np.linspace(-1,3,10)
     mus = np.array([0,1,2]) # means of likelihoods, shape (k,)
-    sigmas = np.array([1,1,1]) # std of likelihoods, shape (k,)
+    sigmas = np.array([1,1,1]) # stds of likelihoods, shape (k,)
     
     for x in xs:
+        likelihoods = norm.pdf(x, loc=mus, scale=sigmas)
+
+        # structral inference
         phi_star, map_idx_phi = structural_inference(x, p_s_phi, mus, sigmas)
-        print(phi_star)
+                
+        # full state inference 
+        post_full, map_idx_s_full = perceptual_inference(x, np.array([1,1,1]), mus, sigmas)
+        full_posteriors.append(post_full)
+        c = complexity(post_full, prior_full)
+        Cs_full.append(c)
+        a = accuracy(post_full, likelihoods)
+        As_full.append(a)
+        Fs_full.append(a-c)
+
+        # reduced conditional state inference 
+        reduced_likelihoods = likelihoods[phi_star.astype(bool)]
+        post_red, map_idx_s = perceptual_inference(x, phi_star, mus, sigmas)
+        reduced_posteriors.append(post_red)
+        c = complexity(post_red, prior_red)
+        Cs_red.append(c)
+        a = accuracy(post_red, reduced_likelihoods)
+        As_red.append(a)
+        Fs_red.append(a-c)
+    
+    # plt.plot(xs, Fs_full, label="F (full)")
+    # plt.plot(xs, Fs_red, label="F (reduced)")
+    # plt.title("F of full vs 2-state posterior")
+    # plt.xlabel("Horizontal target location")
+    # plt.ylabel("Free Energy F")
+    # plt.legend()
+    # plt.show()
+    
+    # plt.plot(xs, Cs_full, label="Complexity (full)")
+    # plt.plot(xs, Cs_red, label="Complexity (reduced)")
+    # plt.title("Complexity of full vs 2-state posterior")
+    # plt.xlabel("Horizontal target location")
+    # plt.ylabel("Complexity")
+    # plt.legend()
+    # plt.show()
+                
+    # plt.plot(xs, As_full, label="Accuracy (full)")
+    # plt.plot(xs, As_red, label="Accuracy (reduced)")
+    # plt.title("Accuracy of full vs 2-state posterior")
+    # plt.xlabel("Horizontal target location")
+    # plt.ylabel("Accuracy")
+    # plt.legend()
+    # plt.show()
+
+    
+    plt.plot(xs, Cs_full, label="Complexity (full)", color = "blue")
+    plt.plot(xs, Cs_red, label="Complexity (reduced)", color = "dodgerblue")
+                
+    plt.plot(xs, As_full, label="Accuracy (full)", color = "green")
+    plt.plot(xs, As_red, label="Accuracy (reduced)", color = "limegreen")
+    plt.title("F of full vs 2-state posterior")
+    plt.xlabel("Horizontal target location")
+    plt.ylabel("Complexity / accuracy")
+    plt.legend()
+    plt.show()
+
+    plt.plot(xs, Fs_full, label="F (full)", color = "gold")
+    plt.plot(xs, Fs_red, label="F (reduced)", color = "orange")
+    plt.title("F of full vs 2-state posterior")
+    plt.xlabel("Horizontal target location")
+    plt.ylabel("Free Energy F")
+    plt.legend()
+    plt.show()
+    
+    
+    
+    
+    
+    
+
         
-        post, map_idx_s = perceptual_inference(x, phi_star, mus, sigmas)
-        print(post)
+        
+        
+        
+        
     
 
 if __name__ == "__main__":
     main()
-
-
-
-# def structural_inference():
-#     pass
-
-
-
-
-# def comp(p, q):
-#     # Avoid division by zero and log(0) by masking out zero entries in p
-#     mask = (p < 1) 
-#     return float(np.sum(p[mask] * (np.log(p[mask]+1e-12) - np.log(q[mask] + 1e-12)))) # pk changed
-
-# def acc(q, p_x_s):
-#     return float(np.dot(q, np.log(p_x_s + 1e-12)))
-
-# def compute_posterior(x, mus, sigmas):
-#     likelihoods = np.array([norm.pdf(x, loc=mu, scale=sigma) for mu, sigma in zip(mus, sigmas)])
-#     posterior = likelihoods / np.sum(likelihoods)
-#     return posterior, likelihoods
-
-# def compute_pairwise_posterior(x, mus, sigmas, idx1, idx2):
-#     #############PK changed so that is still 3 choices, just one has 0 posterior and likelihood
-#     likelihoods = np.array([
-#         norm.pdf(x, loc=mus[idx1], scale=sigmas[idx1]),
-#         norm.pdf(x, loc=mus[idx2], scale=sigmas[idx2]),
-#         0
-#     ])
-#     posterior = likelihoods / np.sum(likelihoods)
-#     return posterior, likelihoods
-
-# def compute_pairwise_posterior(x, mus, sigmas, idx1, idx2):
-#     likelihoods = np.array([
-#         norm.pdf(x, loc=mus[idx1], scale=sigmas[idx1]),
-#         norm.pdf(x, loc=mus[idx2], scale=sigmas[idx2])
-#     ])
-#     posterior = likelihoods / np.sum(likelihoods)
-#     return posterior, likelihoods
-
-
-# def structural_inference():
-#     pass
-
-
-# # represent p and q right way round in the KL divergence for complexity
-# # check mask logic
-
-
-# xs = np.linspace(-3,3, 100)
-# #x = -5.0
-# mus = [0.0, 1.0, 2.0]
-# sigmas = [1.0, 1.0, 1.0]
-
-
-# for x in xs:
-#     # compute posterior full model 
-#     # compute posterior reduced 2 prior 2
-#     # compute posterior reduced 2, prior 3
-    
-#     # record F: C, A 
