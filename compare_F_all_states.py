@@ -64,8 +64,9 @@ def perceptual_inference(x, phi_star, mus, sigmas):
     
     likelihoods = norm.pdf(x, loc=mus, scale=sigmas)
         
-    # use φ* as a binary mask to pick out relevant Gaussians
-    reduced_likelihoods = likelihoods[phi_star.astype(bool)]
+    # instead of using φ* as a binary mask to pick out relevant Gaussians, we do element-wise multiplication
+    # this keeps the posterior of size k but with a zero entry instead...
+    reduced_likelihoods = likelihoods * phi_star
     
     # normalise Gaussian likelihoods to get posterior
     posterior = reduced_likelihoods / np.sum(reduced_likelihoods)
@@ -154,38 +155,17 @@ def main():
         Fs_full.append(a-c)
 
         # reduced conditional state inference 
-        reduced_likelihoods = likelihoods[phi_star.astype(bool)]
+        # instead of using φ* as a binary mask to pick out relevant Gaussians, we do element-wise multiplication
+        # this keeps the posterior of size k but with a zero entry instead...
+        reduced_likelihoods = likelihoods * phi_star
         post_red, map_idx_s = perceptual_inference(x, phi_star, mus, sigmas)
+        print("reduced post", post_red)
         reduced_posteriors.append(post_red)
-        c = complexity(post_red, prior_red)
+        c = complexity(post_red, prior_full)
         Cs_red.append(c)
         a = accuracy(post_red, reduced_likelihoods)
         As_red.append(a)
         Fs_red.append(a-c)
-    
-    # plt.plot(xs, Fs_full, label="F (full)")
-    # plt.plot(xs, Fs_red, label="F (reduced)")
-    # plt.title("F of full vs 2-state posterior")
-    # plt.xlabel("Horizontal target location")
-    # plt.ylabel("Free Energy F")
-    # plt.legend()
-    # plt.show()
-    
-    # plt.plot(xs, Cs_full, label="Complexity (full)")
-    # plt.plot(xs, Cs_red, label="Complexity (reduced)")
-    # plt.title("Complexity of full vs 2-state posterior")
-    # plt.xlabel("Horizontal target location")
-    # plt.ylabel("Complexity")
-    # plt.legend()
-    # plt.show()
-                
-    # plt.plot(xs, As_full, label="Accuracy (full)")
-    # plt.plot(xs, As_red, label="Accuracy (reduced)")
-    # plt.title("Accuracy of full vs 2-state posterior")
-    # plt.xlabel("Horizontal target location")
-    # plt.ylabel("Accuracy")
-    # plt.legend()
-    # plt.show()
 
     
     plt.plot(xs, Cs_full, label="Complexity (full)", color = "blue")
