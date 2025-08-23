@@ -64,9 +64,8 @@ def perceptual_inference(x, phi_star, mus, sigmas):
     
     likelihoods = norm.pdf(x, loc=mus, scale=sigmas)
         
-    # instead of using φ* as a binary mask to pick out relevant Gaussians, we do element-wise multiplication
-    # this keeps the posterior of size k but with a zero entry instead...
-    reduced_likelihoods = likelihoods * phi_star
+    # use φ* as a binary mask to pick out relevant Gaussians
+    reduced_likelihoods = likelihoods[phi_star.astype(bool)]
     
     # normalise Gaussian likelihoods to get posterior
     posterior = reduced_likelihoods / np.sum(reduced_likelihoods)
@@ -108,7 +107,7 @@ def accuracy(q, p_x_s):
 
     
 def main():
-    
+    rng = np.random.default_rng(0)
     # 1D case
     
     # number of latent states
@@ -122,7 +121,7 @@ def main():
     p_s_phi = p_s_phis[reduced_k]
     
     prior_full = np.ones(k,) /k # flat prior over full state posterior    
-    #prior_red = np.ones(reduced_k,) /reduced_k
+    prior_red = np.ones(reduced_k,) /reduced_k
     
     full_posteriors = []
     reduced_posteriors = []
@@ -134,76 +133,72 @@ def main():
     Cs_red = [] # Complexity
     As_red = [] # Accuracy
     
-    # x = 0.5 # observation
-    xs = np.linspace(-1,3,10)
     mus = np.array([0,1,2]) # means of likelihoods, shape (k,)
     sigmas = np.array([1,1,1]) # stds of likelihoods, shape (k,)
     
-    for x in xs:
-        likelihoods = norm.pdf(x, loc=mus, scale=sigmas)
+    # true data distribution (shifting mean along horizontal axis)
+    true_mus = np.linspace(-1, 3, 50)  # horizontal axis values
+    sigma_true = 0.3                    # true observation noise
+    batch = 100                         # samples per true mean
 
-        # structral inference
-        phi_star, map_idx_phi = structural_inference(x, p_s_phi, mus, sigmas)
-                
-        # full state inference 
-        post_full, map_idx_s_full = perceptual_inference(x, np.array([1,1,1]), mus, sigmas)
-        full_posteriors.append(post_full)
-        c = complexity(post_full, prior_full)
-        Cs_full.append(c)
-        a = accuracy(post_full, likelihoods)
-        As_full.append(a)
-        Fs_full.append(a-c)
+    # storage for (batch-averaged) metrics vs true mean
+    Fs_full, Cs_full, As_full = [], [], []
+    Fs_red,  Cs_red,  As_red  = [], [], []
 
-        # reduced conditional state inference 
-        # instead of using φ* as a binary mask to pick out relevant Gaussians, we do element-wise multiplication
-        # this keeps the posterior of size k but with a zero entry instead...
-        reduced_likelihoods = likelihoods * phi_star
-        post_red, map_idx_s = perceptual_inference(x, phi_star, mus, sigmas)
-        print("reduced post", post_red)
-        # given map idx what is the reduced (but still 3 state prior)
-        prior_red = prior_full * phi_star 
-        # renormalise
-        prior_red = np.divide(prior_red, prior_red.sum(axis=0))+1e-10        
-        reduced_posteriors.append(post_red)
-        
-        c = complexity(post_red, prior_red)
-        Cs_red.append(c)
-        a = accuracy(post_red, reduced_likelihoods)
-        As_red.append(a)
-        Fs_red.append(a-c)
+    for true_mu in true_mus:
+        # sample a batch from the true distribution N(true_mu, sigma_true^2)
+        xs_batch = rng.normal(loc=true_mu, scale=sigma_true, size=batch)
 
-    
-    plt.plot(xs, Cs_full, label="Complexity (full)", color = "blue")
-    plt.plot(xs, Cs_red, label="Complexity (reduced)", color = "dodgerblue")
-                
-    plt.plot(xs, As_full, label="Accuracy (full)", color = "green")
-    plt.plot(xs, As_red, label="Accuracy (reduced)", color = "limegreen")
+        # accumulate metrics over the batch
+        C_full_sum = A_full_sum = F_full_sum = 0.0
+        C_red_sum  = A_red_sum  = F_red_sum  = 0.0
+
+        for x in xs_batch:
+            likelihoods = norm.pdf(x, loc=mus, scale=sigmas)
+
+            # structural inference
+            phi_star, _ = structural_inference(x, p_s_phi, mus, sigmas)
+
+            # full-state inference
+            post_full, _ = perceptual_inference(x, np.array([1, 1, 1]), mus, sigmas)
+            c_full = complexity(post_full, prior_full)
+            a_full = accuracy(post_full, likelihoods)
+            f_full = a_full - c_full
+
+            # reduced-state (conditional on φ*)
+            reduced_likelihoods = likelihoods[phi_star.astype(bool)]
+            post_red, _ = perceptual_inference(x, phi_star, mus, sigmas)
+            c_red = complexity(post_red, prior_red)
+            a_red = accuracy(post_red, reduced_likelihoods)
+            f_red = a_red - c_red
+
+            C_full_sum += c_full; A_full_sum += a_full; F_full_sum += f_full
+            C_red_sum  += c_red;  A_red_sum  += a_red;  F_red_sum  += f_red
+
+        # average over the batch
+        Cs_full.append(C_full_sum / batch); As_full.append(A_full_sum / batch); Fs_full.append(F_full_sum / batch)
+        Cs_red.append(C_red_sum / batch);   As_red.append(A_red_sum / batch);   Fs_red.append(F_red_sum / batch)
+
+    # plots vs the true means
+    plt.plot(true_mus, Cs_full, label="Complexity (full)", color = "blue")
+    plt.plot(true_mus, Cs_red, label="Complexity (reduced)", color = "dodgerblue")     
+    plt.plot(true_mus, As_full, label="Accuracy (full)", color = "green")
+    plt.plot(true_mus, As_red, label="Accuracy (reduced)", color = "limegreen")
     plt.title("F of full vs 2-state posterior")
     plt.xlabel("Horizontal target location")
     plt.ylabel("Complexity / accuracy")
     plt.legend()
     plt.show()
 
-    plt.plot(xs, Fs_full, label="F (full)", color = "orange")
-    plt.plot(xs, Fs_red, label="F (reduced)", color = "gold")
+    plt.plot(true_mus, Fs_full, label="F (full)", color = "orange")
+    plt.plot(true_mus, Fs_red, label="F (reduced)", color = "gold")
     plt.title("F of full vs 2-state posterior")
     plt.xlabel("Horizontal target location")
     plt.ylabel("Free Energy F")
     plt.legend()
     plt.show()
-    
-    
-    
-    
-    
-    
-
-        
-        
-        
-        
-        
-    
 
 if __name__ == "__main__":
-    main()
+    main()  
+    
+    
