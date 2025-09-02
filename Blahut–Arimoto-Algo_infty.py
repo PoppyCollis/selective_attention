@@ -10,6 +10,37 @@ import matplotlib as mpl
 
 EPS = 1e-16
 
+def _argmax_dist(scores: np.ndarray, prior: Optional[np.ndarray] = None) -> np.ndarray:
+    scores = np.asarray(scores, float)
+    winners = (scores == np.max(scores))
+    out = np.zeros_like(scores, float)
+    if prior is None:
+        out[winners] = 1.0 / (np.sum(winners) + EPS)
+    else:
+        w = np.clip(np.asarray(prior, float)[winners], EPS, np.inf)
+        out[winners] = w / (np.sum(w) + EPS)
+    return out
+
+def safe_softmax(logits: np.ndarray, axis: int = 0) -> np.ndarray:
+    # If any non-finite appears, fall back to argmax along `axis`
+    if not np.all(np.isfinite(logits)):
+        # argmax along axis, uniform over ties
+        m = np.nanmax(logits, axis=axis, keepdims=True)
+        winners = (logits == m).astype(float)
+        return winners / (np.sum(winners, axis=axis, keepdims=True) + EPS)
+    m = np.max(logits, axis=axis, keepdims=True)
+    z = np.exp(logits - m)
+    return z / (np.sum(z, axis=axis, keepdims=True) + EPS)
+
+def boltzmann_dist(prior: np.ndarray, beta: float, utility: np.ndarray) -> np.ndarray:
+    prior = np.clip(prior, EPS, 1.0)
+    if beta is None or np.isinf(beta):
+        # β→∞ ⇒ greedy: argmax on utility (ties broken by prior mass)
+        return _argmax_dist(utility, prior=prior)
+    logits = np.log(prior) + beta * utility
+    return safe_softmax(logits, axis=0)
+
+
 def _normalize(v: np.ndarray, axis: Optional[int] = None) -> np.ndarray:
     v = np.clip(v, 0.0, np.inf)
     s = np.sum(v, axis=axis, keepdims=True) + EPS
@@ -29,9 +60,6 @@ def kl_bits(p: np.ndarray, q: np.ndarray, axis: Optional[int] = None) -> np.ndar
     val = np.sum(p * (np.log(p) - np.log(q)), axis=axis)
     return np.maximum(val, 0.0)
 
-def boltzmann_dist(prior: np.ndarray, beta: float, utility: np.ndarray) -> np.ndarray:
-    logits = np.log(np.clip(prior, EPS, 1.0)) + beta * utility
-    return softmax(logits, axis=0)
 
 # def marginalizeo(pogw: np.ndarray, pagow: np.ndarray) -> np.ndarray:
 #     A, X, N = pagow.shape
@@ -41,7 +69,7 @@ def boltzmann_dist(prior: np.ndarray, beta: float, utility: np.ndarray) -> np.nd
 #         pagw[:, j] = pagow[:, :, j] @ pogw[:, j]**(1)
 #     return _normalize(pagw, axis=0)
 
-def marginalizeo(pogw: np.ndarray, pagow: np.ndarray, gamma: float = np.inf) -> np.ndarray:
+def marginalizeo(pogw: np.ndarray, pagow: np.ndarray, gamma: float = 1) -> np.ndarray:
     """
     Compute p_gamma(a|w) by tempering p(o|w):
         w_o(γ|w) ∝ p(o|w)^γ    (γ=1 → standard mixture; γ=0 → uniform; γ=∞ → argmax)
@@ -157,26 +185,27 @@ def compute_pagow_iteration(pago: np.ndarray, beta2: float, beta3: float,
                 pagow[:, x, j] = softmax(logits, axis=0)
     return pagow
 
-def compute_pogw_iteration(beta1: float, beta2: float, beta3: float,
-                           U_pre: np.ndarray, pa: np.ndarray, po: np.ndarray,
-                           pago: np.ndarray, pagow: np.ndarray) -> np.ndarray:
+def compute_pogw_iteration(beta1, beta2, beta3, U_pre, pa, po, pago, pagow):
     A, X = pago.shape
     N = U_pre.shape[1]
-    assert pagow.shape == (A, X, N)
     inv_beta2 = 0.0 if (beta2 is None or np.isinf(beta2)) else (1.0 / beta2)
     inv_beta3 = 0.0 if (beta3 is None or np.isinf(beta3)) else (1.0 / beta3)
     pogw = np.empty((X, N))
     for j in range(N):
-        logits_x = np.empty(X)
+        util_x = np.empty(X)
         for x in range(X):
-            p_axw = pagow[:, x, j]
+            p_axw = np.clip(pagow[:, x, j], EPS, 1.0)
             EU = float(np.dot(p_axw, U_pre[:, j]))
-            DKL_a = float(np.sum(p_axw * (np.log(np.clip(p_axw, EPS, 1.0)) - np.log(np.clip(pa, EPS, 1.0)))))
-            DKL_ago = float(np.sum(p_axw * (np.log(np.clip(p_axw, EPS, 1.0)) - np.log(np.clip(pago[:, x], EPS, 1.0)))))
-            util = EU - inv_beta2 * DKL_a - (inv_beta3 - inv_beta2) * DKL_ago
-            logits_x[x] = np.log(np.clip(po[x], EPS, 1.0)) + beta1 * util
-        pogw[:, j] = softmax(logits_x, axis=0)
+            DKL_a   = float(np.sum(p_axw * (np.log(p_axw) - np.log(np.clip(pa,   EPS, 1.0)))))
+            DKL_ago = float(np.sum(p_axw * (np.log(p_axw) - np.log(np.clip(pago[:, x], EPS, 1.0)))))
+            util_x[x] = EU - inv_beta2 * DKL_a - (inv_beta3 - inv_beta2) * DKL_ago
+        if beta1 is None or np.isinf(beta1):
+            pogw[:, j] = _argmax_dist(util_x)  # ignore po in the β→∞ limit
+        else:
+            logits_x = np.log(np.clip(po, EPS, 1.0)) + beta1 * util_x
+            pogw[:, j] = safe_softmax(logits_x, axis=0)
     return pogw
+
 
 @dataclass
 class BAResult:
@@ -253,13 +282,18 @@ def make_w_samples(L: float, Uhi: float, N: int, grid: bool = False, rng: Option
         s = np.full(N, 1.0 / N)
     return w.astype(float), s.astype(float)
 
-def build_U_pre(U_fn: Callable[[int, float], float], A: int, w: np.ndarray) -> np.ndarray:
+# suppose you have log_p_a_given_x: shape (A, X)
+def build_U_pre(U_fn, A, w, log_p_a_given_x=None):
     N = len(w)
-    U_pre = np.empty((A, N), dtype=float)
+    U = np.empty((A, N))
     for j in range(N):
         for a in range(A):
-            U_pre[a, j] = float(U_fn(a + 1, float(w[j])))
-    return U_pre
+            U[a, j] = float(U_fn(a + 1, float(w[j])))
+    if log_p_a_given_x is not None:
+        # if X=1, pass log_p_a_given_x[:,0]
+        U = U + log_p_a_given_x[:, [0]]  # broadcast over all w for that x
+    return U
+
 
 def threevar_BA_continuousW(X: int, beta1: float, beta2: float, beta3: float,
                             U_fn: Callable[[int, float], float], A: int,
@@ -729,13 +763,12 @@ def U_fn(a: int, w: float) -> float:
 # --- Run BA with history tracking on the same quadratic-utility example ---
 X = 2
 A = 3
-mu_as = np.array([-0.96, -0.59, 0.96])
-sigma_as = np.ones(A)*(2)
-epsilon = 0.8
+mu_as = np.array([-1, 0, 1])
+sigma_as = np.ones(A)*(1)
+epsilon = 0.5
 L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon
 
-beta1, beta2, beta3 = np.inf, 40, 20  # 23, 30, 8 
-
+beta1, beta2, beta3 = np.inf,2.5,2
 # Parameters for 2 state emerges even when 3 state given...
 # X = 3
 # A = 3
@@ -751,6 +784,7 @@ beta1, beta2, beta3 = np.inf, 40, 20  # 23, 30, 8
 n_samples = 300
 w, pw = make_w_samples(L, Uhi, n_samples, grid=True)
 U_pre = build_U_pre(U_fn, A, w)
+
 
 res = threevar_BA_iterations(
     X=X, beta1=beta1, beta2=beta2, beta3=beta3,
@@ -822,9 +856,9 @@ plt.show()
 # --- p(a|w) stats vs w (combined plot) ---
 pagw_stats = compute_pagw_stats_over_w(res.pagw)
 
-print("negentropy values:", pagw_stats["negentropy01"])
-#print("max values:", pagw_stats["maxval"])
-#print("gap values:", pagw_stats["gap"])
+# print("negentropy values:", pagw_stats["negentropy01"])
+# print("max values:", pagw_stats["maxval"])
+# print("gap values:", pagw_stats["gap"])
 
 
 pagw_df    = pagw_stats_df(pagw_stats, w)     # optional: inspect or save
@@ -841,9 +875,4 @@ print(df.head())
 # curves_df = stats_to_df(all_stats, w)   # assumes `w` is available in scope
 # fig_all = plot_pagow_stats_vs_w_combined(w, all_stats)  # all x on one plot, all three stats
 # plt.show()
-
-
-#np.save("negent_3.npy", pagw_stats["negentropy01"])
-#np.save("diff.npy", pagw_stats["gap"])
-#np.save("max.npy", pagw_stats["maxval"])
 

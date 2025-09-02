@@ -1,0 +1,151 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+# ---- Helpers ----
+def normalise(v, axis=None):
+    v = np.asarray(v, dtype=float)
+    if axis is None:
+        z = v.sum()
+        return v / z if z > 0 else np.full_like(v, 1.0 / len(v))
+    z = v.sum(axis=axis, keepdims=True)
+    out = v / z
+    out[np.isnan(out)] = 0.0
+    return out
+
+def gaussian_pdf_2d(x, mean, cov):
+    diff = x - mean
+    inv_sigma = 1.0 / cov[0, 0]  # isotropic cov
+    norm_const = 1.0 / (2.0 * np.pi * np.sqrt(np.linalg.det(cov)))
+    quad = -0.5 * inv_sigma * (diff[..., 0] ** 2 + diff[..., 1] ** 2)
+    return norm_const * np.exp(quad)
+
+
+def gaussian_likelihoods(xs, y_const, means, covariances):
+    # take all of the 2D xs 
+    Xs = np.stack([xs, np.full_like(xs, y_const)], axis=-1)  # [T,2]
+    T = Xs.shape[0] # length of sampled batch
+    S = means.shape[0] # latent S mean position
+    L = np.zeros((T, S), dtype=float) # create empty likelihood array
+    # for each of the 3 observation likelihoods
+    for s in range(S):
+        # calculate the likelihood of all of the datapoints x
+        L[:, s] = gaussian_pdf_2d(Xs, means[s], covariances[s])
+    return L  # [T,S]
+
+def coherent_structural_priors(M, p_s, leak=0.0):
+    """
+    From a mask M [P,S] and global prior p_s [S], build a *coherent* pair:
+      p_phi [P], p_s_given_phi [P,S]
+    such that sum_phi p_phi * p_s_given_phi[phi,:] == p_s (elementwise).
+    leak: optional ε in [0,1) to avoid hard zeros (use ε≈1e-6 if desired).
+    """
+    M = np.asarray(M, float)
+    p_s = normalise(p_s)
+
+    # (optional) leaky mask to avoid exact zeros
+    M_tilde = leak + (1.0 - leak) * M
+
+    # coverage counts per state
+    c = M_tilde.sum(axis=0)              # [S]
+    if np.any(c == 0):
+        raise ValueError("Some states are not covered by any φ (columns with zero in M).")
+
+    # shares: split p_s evenly across covering φ
+    a = M_tilde * (p_s / c)[None, :]     # [P,S]
+
+    # row sums become p_phi; note they sum to 1 automatically
+    p_phi = a.sum(axis=1)                # [P]
+    # conditionals
+    p_s_given_phi = a / p_phi[:, None]   # row-normalize
+
+    return p_s_given_phi
+
+# ---- Config ----
+config = [-96.0, 0.0, 96.0]
+sigma = 64.0 * 64.0  # variance
+means = np.array([[config[0], 0.0],
+                  [config[1], 0.0],
+                  [config[2], 0.0]], dtype=float)
+covariances = np.array([[[sigma, 0.0], [0.0, sigma]],
+                        [[sigma, 0.0], [0.0, sigma]],
+                        [[sigma, 0.0], [0.0, sigma]]], dtype=float)
+
+# pre-define a single  2D datapoint x
+x_val = 5
+x = np.array([x_val, 0.0])  # shape (2,)
+
+# Priors
+S = means.shape[0]
+
+p_s = np.full(S, 1.0 / S)  # p(s) flat prior
+
+P = 2 # size of groups (structural models)
+
+# Given number of structural, create binary mask of "on" and "off" states for phi indexed mask
+if P == 1:
+    M = np.array([[1, 1, 1]])                    # P=1  (φ0: s1,s2,s3)
+elif P == 2:
+    M = np.array([[1, 1, 0], [0, 1, 1]]) # P=2  (φ0: s1,s2; φ1: s2,s3)
+elif P == 3:
+    M = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # P=3  (φ0: s1; φ1: s2; φ2: s3)
+else:
+    raise ValueError("Must define 0 < P ≤ S")
+
+p_phi = np.full(P, 1.0 / P)  # p(φ) flat prior
+
+# row-normalize over s
+scores = M * p_s 
+#p_s_given_phi = coherent_structural_priors(M, p_s)
+
+p_s_given_phi = normalise(scores, axis=1)
+print(p_s_given_phi)
+
+gamma = 2 # by gamma = 5 we get the same as inf
+
+# calculate p_x_given_s (likelihood at this single x for each state s)
+p_x_given_s = np.array([gaussian_pdf_2d(x, means[s], covariances[s]) for s in range(S)])  # [S]
+
+# calculate "standard" posterior p(s|x) ∝ p(x|s) p(s) just by simply normalising the likelihood * prior over s
+# just for comparison
+p_s_given_x_std = normalise(p_x_given_s * p_s)  # [S]
+
+# visualise standard posterior as a plot
+plt.figure()
+plt.bar(np.arange(1, S+1), p_s_given_x_std)
+plt.xticks(np.arange(1, S+1), [f"s{i}" for i in range(1, S+1)])
+plt.ylim(0, 1)
+plt.title("Standard posterior p(s|x)")
+plt.ylabel("Probability")
+for i, y in enumerate(p_s_given_x_std, start=1):
+    plt.text(i, y + 0.02, f"{y:.2f}", ha="center")
+
+# calculate p(s|x) via structural mixing 
+# evidence per structure
+m_phi = p_s_given_phi @ p_x_given_s                        # [P]
+p_phi_given_x = normalise(p_phi * m_phi)                   # [P]
+
+# per-structure posteriors p(s|x,φ)
+p_s_given_x_phi = normalise(p_s_given_phi * p_x_given_s, axis=1)  # [P,S]
+
+# tempered structure weights
+if np.isinf(gamma):
+    w = np.zeros_like(p_phi_given_x)
+    w[np.argmax(p_phi_given_x)] = 1.0
+else:
+    w = normalise(p_phi_given_x**gamma)                    # [P]
+
+# mixture over structures (sum_φ w_φ p(s|x,φ))
+p_gamma = (w[:, None] * p_s_given_x_phi).sum(axis=0)       # [S]
+p_gamma = p_gamma / p_gamma.sum()                          # normalize (defensive)
+
+
+# visualise collapsed structural posterior p_gamma as a plot
+plt.figure()
+plt.bar(np.arange(1, S+1), p_gamma)
+plt.xticks(np.arange(1, S+1), [f"s{i}" for i in range(1, S+1)])
+plt.ylim(0, 1)
+plt.title(f"Collapsed structural posterior p_γ(s|x)  (γ={gamma})")
+plt.ylabel("Probability")
+for i, y in enumerate(p_gamma, start=1):
+    plt.text(i, y + 0.02, f"{y:.2f}", ha="center")
+plt.show()

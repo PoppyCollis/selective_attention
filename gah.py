@@ -33,43 +33,12 @@ def boltzmann_dist(prior: np.ndarray, beta: float, utility: np.ndarray) -> np.nd
     logits = np.log(np.clip(prior, EPS, 1.0)) + beta * utility
     return softmax(logits, axis=0)
 
-# def marginalizeo(pogw: np.ndarray, pagow: np.ndarray) -> np.ndarray:
-#     A, X, N = pagow.shape
-#     assert pogw.shape == (X, N)
-#     pagw = np.empty((A, N))
-#     for j in range(N):
-#         pagw[:, j] = pagow[:, :, j] @ pogw[:, j]**(1)
-#     return _normalize(pagw, axis=0)
-
-def marginalizeo(pogw: np.ndarray, pagow: np.ndarray, gamma: float = np.inf) -> np.ndarray:
-    """
-    Compute p_gamma(a|w) by tempering p(o|w):
-        w_o(γ|w) ∝ p(o|w)^γ    (γ=1 → standard mixture; γ=0 → uniform; γ=∞ → argmax)
-        p_γ(a|w) = Σ_o w_o(γ|w) p(a|o,w)
-    Inputs:
-      pogw : (O, N)   columns are p(o|w_j), sum to 1
-      pagow: (A, O, N)
-      gamma: scalar temperature
-    Returns:
-      pagw : (A, N)   columns are p_γ(a|w_j)
-    """
-    A, O, N = pagow.shape
-    assert pogw.shape == (O, N)
+def marginalizeo(pogw: np.ndarray, pagow: np.ndarray) -> np.ndarray:
+    A, X, N = pagow.shape
+    assert pogw.shape == (X, N)
     pagw = np.empty((A, N))
     for j in range(N):
-        wts = np.clip(pogw[:, j], EPS, 1.0)
-        if np.isinf(gamma):
-            # hard gating: one-hot on argmax_o p(o|w_j)
-            onehot = np.zeros_like(wts)
-            onehot[np.argmax(wts)] = 1.0
-            wts = onehot
-        elif gamma != 1.0:
-            wts = wts ** gamma
-            wts = wts / (np.sum(wts) + EPS)   # normalize tempered weights
-        else:
-            # gamma == 1: keep as-is
-            pass
-        pagw[:, j] = pagow[:, :, j] @ wts
+        pagw[:, j] = pagow[:, :, j] @ pogw[:, j]**(1)
     return _normalize(pagw, axis=0)
 
 # def marginalizeo(
@@ -729,22 +698,12 @@ def U_fn(a: int, w: float) -> float:
 # --- Run BA with history tracking on the same quadratic-utility example ---
 X = 2
 A = 3
-mu_as = np.array([-0.96, -0.59, 0.96])
-sigma_as = np.ones(A)*(2)
-epsilon = 0.8
+mu_as = np.array([-96,0,96])
+sigma_as = np.ones(A)*4096
+epsilon = 10
 L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon
 
-beta1, beta2, beta3 = np.inf, 40, 20  # 23, 30, 8 
-
-# Parameters for 2 state emerges even when 3 state given...
-# X = 3
-# A = 3
-# mu_as = np.array([-1, 0, 1])
-# sigma_as = np.ones(A)*4
-# epsilon = 0.5
-# L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon
-
-# beta1, beta2, beta3 = 100, 100, 30     # 23, 30, 8 
+beta1, beta2, beta3 = 20000, np.inf, 8000
 
 # Grid sampling for determinism
 
@@ -766,17 +725,21 @@ print(perf_df.head())
 
 fig1, fig2 = plot_convergence(perf_df)
 
-#print("p(x|w):\n", res.pogw)
+
+
+print("p(x|w):\n", res.pogw)
 print("p(x):", res.po)
-#print("p(a|x,w):\n", res.pagow)
+print("p(a|x,w):\n", res.pagow)
 print("p(a|x):\n", res.pago)
 print("p(a):", res.pa)
-#print("p(a|w):", res.pagw)
+print("p(a|w):", res.pagw)
+
 
 figs = show_prob_matrix(res.pago, name="p(a|x)")
 plt.show()
 
 # Display a 3D matrix with slices
+
 
 for fig in show_prob_matrix(res.pogw, name="p(x|,w)"):
     plt.show()
@@ -823,8 +786,8 @@ plt.show()
 pagw_stats = compute_pagw_stats_over_w(res.pagw)
 
 print("negentropy values:", pagw_stats["negentropy01"])
-#print("max values:", pagw_stats["maxval"])
-#print("gap values:", pagw_stats["gap"])
+print("max values:", pagw_stats["maxval"])
+print("gap values:", pagw_stats["gap"])
 
 
 pagw_df    = pagw_stats_df(pagw_stats, w)     # optional: inspect or save
@@ -841,9 +804,4 @@ print(df.head())
 # curves_df = stats_to_df(all_stats, w)   # assumes `w` is available in scope
 # fig_all = plot_pagow_stats_vs_w_combined(w, all_stats)  # all x on one plot, all three stats
 # plt.show()
-
-
-#np.save("negent_3.npy", pagw_stats["negentropy01"])
-#np.save("diff.npy", pagw_stats["gap"])
-#np.save("max.npy", pagw_stats["maxval"])
 
