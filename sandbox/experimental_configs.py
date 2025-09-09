@@ -36,11 +36,11 @@ def main():
 
     k = 3
     n_samples = 375
-    std = 64
-    sigma = std*std
+    std = 50
+    sigma = std*std # std
         
-    exp = 2 # 1,2,3 
-    config = 1 # 1,2,3,4
+    exp = 1 # 1,2,3 
+    config = 3 # 1,2,3,4
 
     mu_xs =  [[-96,0,96], 
             [-128,0,128], 

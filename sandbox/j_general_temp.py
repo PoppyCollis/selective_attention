@@ -164,8 +164,7 @@ def build_conditionals_from_mask_and_gaussians(xs, y_const, means, covariances,
     """
     S = means.shape[0]
     if p_s_prior is None:
-       p_s_prior = np.full(S, 1.0 / S)
-    #p_s_prior = np.array([0.30, 0.40, 0.30])
+       p_s_prior = np.full(S, 1.0 / S) #p_s_prior = np.array([0.30, 0.40, 0.30])
     p_s_phi = prepare_p_s_given_phi(M, p_s_prior, is_mask=None)  # [P,S]
     P = p_s_phi.shape[0]
     print(p_s_phi)
@@ -247,7 +246,8 @@ if __name__ == "__main__":
     if P == 1:
         M = np.array([[1, 1, 1]])                    # φ0: s1,s2,s3
     elif P == 2:
-        M = np.array([[1, 1, 0], [0, 1, 1]])         # φ0: s1,s2; φ1: s2,s3
+        #M = np.array([[1, 1, 0], [0, 1, 1]])
+        M = np.array([[0.4285, 0.5714, 0], [0, 0.57142,  0.428571]])       # φ0: s1,s2; φ1: s2,s3
     elif P == 3:
         M = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])  # singleton structures
     else:

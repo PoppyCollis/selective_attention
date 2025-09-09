@@ -100,40 +100,6 @@ def marginalizeo(pogw: np.ndarray, pagow: np.ndarray, gamma: float = 1) -> np.nd
         pagw[:, j] = pagow[:, :, j] @ wts
     return _normalize(pagw, axis=0)
 
-# def marginalizeo(
-#     pogw: np.ndarray,
-#     pagow: np.ndarray,
-#     alpha: float = 1,
-#     topk: int | None = None,
-#     ) -> np.ndarray:
-#     """
-#     Compute p(a|w) by mixing p(a|x,w) with a tempered / gated p(x|w).
-#       • alpha: power on p(x|w). alpha=1 -> standard; alpha>1 -> sharper; alpha<1 -> flatter.
-#       • topk:  if set, zero-out all but the top-k entries of p(x|w)^alpha before renormalizing.
-
-#     Inputs:
-#       pogw:  (X, N)  columns are p(x|w_j), sum to 1
-#       pagow: (A, X, N)
-#     Returns:
-#       pagw:  (A, N)  with columns p(a|w_j)
-#     """
-#     A, X, N = pagow.shape
-#     assert pogw.shape == (X, N)
-#     pagw = np.empty((A, N))
-#     for j in range(N):
-#         wts = np.clip(pogw[:, j], EPS, 1.0)
-#         if alpha != 1.0:
-#             wts = np.power(wts, alpha)
-#         if topk is not None and 1 <= topk < X:
-#             # keep only top-k weights (after powering), zero the rest
-#             idx = np.argpartition(-wts, topk-1)[:topk]
-#             mask = np.zeros_like(wts)
-#             mask[idx] = 1.0
-#             wts = wts * mask
-#         wts = wts / (np.sum(wts) + EPS)  # normalize tempered/gated weights
-#         pagw[:, j] = pagow[:, :, j] @ wts
-#     return _normalize(pagw, axis=0)
-
 def compute_marginals(pw: np.ndarray, pogw: np.ndarray, pagow: np.ndarray):
     X, N = pogw.shape
     A = pagow.shape[0]
@@ -282,56 +248,6 @@ def make_w_samples(L: float, Uhi: float, N: int, grid: bool = False, rng: Option
         s = np.full(N, 1.0 / N)
     return w.astype(float), s.astype(float)
 
-def make_w_samples_gaussian(
-    L: float, Uhi: float, N: int, grid: bool = False,
-    rng: Optional[np.random.Generator] = None,
-    sigma_scale: float = 0.25
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Sample a batch of datapoints w from a Gaussian distribution
-    centered in the middle of [L, Uhi].
-    
-    Args:
-        L: Lower bound
-        Uhi: Upper bound
-        N: Number of samples
-        grid: If True, use evenly spaced quantiles instead of random samples
-        rng: Optional numpy random generator
-        sigma_scale: std = sigma_scale * (Uhi - L), controls spread
-    Returns:
-        w: Sampled points (float array)
-        s: Normalized weights (float array)
-    """
-    if not (Uhi > L):
-        raise ValueError("need U > L")
-    if rng is None:
-        rng = np.random.default_rng()
-
-    mu = 0.2 * (Uhi + L)
-    sigma = sigma_scale * (Uhi - L)
-
-    if grid:
-        # Deterministic samples at Gaussian quantiles
-        from scipy.stats import norm
-        quantiles = (np.arange(1, N + 1) - 0.5) / N
-        w = norm.ppf(quantiles, loc=mu, scale=sigma)
-    else:
-        w = rng.normal(loc=mu, scale=sigma, size=N)
-
-    # Restrict samples to [L, Uhi] by clipping
-    w = np.clip(w, L, Uhi)
-
-    # Weights are uniform if sampling, but normalized if grid (discrete approx of Gaussian)
-    if grid:
-        from scipy.stats import norm
-        pdf_vals = norm.pdf(w, loc=mu, scale=sigma)
-        s = pdf_vals / np.sum(pdf_vals)
-    else:
-        s = np.full(N, 1.0 / N)
-
-    return w.astype(float), s.astype(float)
-
-
 # suppose you have log_p_a_given_x: shape (A, X)
 def build_U_pre(U_fn, A, w, log_p_a_given_x=None):
     N = len(w)
@@ -339,9 +255,6 @@ def build_U_pre(U_fn, A, w, log_p_a_given_x=None):
     for j in range(N):
         for a in range(A):
             U[a, j] = float(U_fn(a + 1, float(w[j])))
-    # if log_p_a_given_x is not None:
-    #     # if X=1, pass log_p_a_given_x[:,0]
-    #     U = U + log_p_a_given_x[:, [0]]  # broadcast over all w for that x
     return U
 
 
@@ -349,15 +262,10 @@ def threevar_BA_continuousW(X: int, beta1: float, beta2: float, beta3: float,
                             U_fn: Callable[[int, float], float], A: int,
                             L: float, Uhi: float, N: int, tol: float = 1e-10,
                             maxiter: int = 10000, grid: bool = False, **init_opts: Any) -> BAResult:
-    # w, pw = make_w_samples_gaussian(L, Uhi, N, grid=grid)
     w, pw = make_w_samples(L, Uhi, N, grid=grid)
-
     U_pre = build_U_pre(U_fn, A, w)
     return threevar_BA_iterations(X=X, beta1=beta1, beta2=beta2, beta3=beta3,
                                   U_pre=U_pre, pw=pw, tol=tol, maxiter=maxiter, **init_opts)
-    
-# Add convergence tracking: compute MI and utility per iteration and plot.
-# Requirements: matplotlib only (no seaborn), one plot per chart, default colors.
 
 def entropy(p, axis=None):
     p = np.clip(p, EPS, 1.0)
@@ -424,7 +332,7 @@ def objective_value(EU, I_ow, I_aw, I_awgo, beta1, beta2, beta3):
     inv_b3 = 0.0 if (beta3 is None or np.isinf(beta3)) else 1.0 / beta3
     # General/parallel composite (matches terms in update equations):
     # J = EU - (1/β1) I(X;W) - (1/β2) I(A;W) - (1/β3 - 1/β2) I(A;W|X)
-    # return EU - inv_b1 * I_ow - inv_b2 * I_aw - (inv_b3 - inv_b2) * I_awgo
+    #return EU - inv_b1 * I_ow - inv_b2 * I_aw - (inv_b3 - inv_b2) * I_awgo
     return EU - inv_b1 * I_ow - inv_b2 * I_aw - inv_b3 * I_awgo
 
 def collect_metrics_over_history(history, pw, U_pre, beta1, beta2, beta3):
@@ -496,7 +404,6 @@ def show_prob_matrix(M: np.ndarray, name: str = "", indices=None, tol: float = 1
         return figs
     else:
         raise ValueError("Expected a 2D or 3D array.")
-    
     
     
 # ----------------------------------------------------------------------------
@@ -589,135 +496,6 @@ def print_pagow_slice_stats_summary(stats: dict):
     print("gap          range:", rng(gp))
 
 
-
-# # -----------------------------------------------------------------------------
-# # FULL-W statistics (curves vs w) for p(a|x,w)
-# # -----------------------------------------------------------------------------
-# def compute_pagow_stats_over_w(pagow: np.ndarray):
-#     """
-#     Compute per-x statistics across *all* w (no sub-sampling).
-#     Inputs
-#       pagow: array (A, X, N) with columns p(a|x,w_j) over a.
-#     Returns dict with (X, N) matrices:
-#       - 'negentropy01' : 1 - H/ln(A)                 in [0,1]
-#       - 'maxval'       : max_a p(a|x,w)             in [0,1]
-#       - 'gap'          : top1 - top2                in [0,1]
-#       - 'entropy'      : H(p(a|x,w))                in nats
-#     """
-#     A, X, N = pagow.shape
-#     P = np.clip(pagow, 1e-16, 1.0)                 # (A, X, N)
-#     H = -np.sum(P * np.log(P), axis=0)             # (X, N)
-#     logA = np.log(float(A))
-#     negentropy01 = 1.0 - H / (logA + 1e-16)        # (X, N)
-#     # top-1 and top-2 along action axis
-#     order = np.argsort(-P, axis=0)                 # (A, X, N)
-#     top1 = np.take_along_axis(P, order[0:1, :, :], axis=0).squeeze(0)  # (X, N)
-#     top2 = np.take_along_axis(P, order[1:2, :, :], axis=0).squeeze(0)  # (X, N)
-#     maxval = top1
-#     gap = top1 - top2
-#     return dict(negentropy01=negentropy01, maxval=maxval, gap=gap, entropy=H)
-
-# def stats_to_df(stats: dict, w: np.ndarray) -> pd.DataFrame:
-#     """
-#     Convert stats (X,N) matrices to a tidy DataFrame keyed by the actual w values.
-#     Columns: ['w','x','negentropy01','maxval','gap','entropy']
-#     """
-#     w = np.asarray(w).reshape(-1)
-#     Nw = w.shape[0]
-#     X, N = stats["negentropy01"].shape
-#     if N != Nw:
-#         raise ValueError(f"Length of w ({Nw}) must match stats width ({N}).")
-#     rows = []
-#     for x in range(X):
-#         for j in range(N):
-#             rows.append(dict(
-#                 w=float(w[j]), x=int(x),
-#                 negentropy01=float(stats["negentropy01"][x, j]),
-#                 maxval=float(stats["maxval"][x, j]),
-#                 gap=float(stats["gap"][x, j]),
-#                 entropy=float(stats["entropy"][x, j]),
-#             ))
-#     return pd.DataFrame(rows).sort_values("w").reset_index(drop=True)
-
-# def plot_pagow_stats_vs_w_combined(w: np.ndarray, stats: dict, which_x=None, xlabel: str = "w"):
-#     """
-#     Single figure: plots negentropy01, gap, and maxval as functions of w,
-#     with one line per (stat, x). Legend labels like 'negentropy | x=1'.
-#     Args:
-#       w        : (N,) real vector of w-values (grid or sample order)
-#       stats    : dict from compute_pagow_stats_over_w (keys: 'negentropy01','gap','maxval',...)
-#       which_x  : iterable of x indices to include (0-based). If None, includes all x.
-#     Returns:
-#       fig (matplotlib.figure.Figure)
-#     """
-#     w = np.asarray(w).reshape(-1)
-#     neg = np.asarray(stats["negentropy01"])  # (X,N) in [0,1]
-#     gap = np.asarray(stats["gap"])           # (X,N) in [0,1]
-#     mxv = np.asarray(stats["maxval"])        # (X,N) in [0,1]
-#     X, N = neg.shape
-#     if N != w.shape[0]:
-#         raise ValueError(f"Length of w ({w.shape[0]}) must match stat width ({N}).")
-#     if which_x is None:
-#         which_x = range(X)
-#     fig = plt.figure()
-#     for x in which_x:
-#         if x == 0:
-#         # Three lines for each x on the same axes
-#             plt.plot(w, neg[x, :], label=f"negentropy | x={x+1}")
-#             #plt.plot(w, gap[x, :], label=f"gap | x={x+1}")
-#             #plt.plot(w, mxv[x, :], label=f"max | x={x+1}")
-#         else:
-#             plt.plot(w, neg[x, :], label=f"negentropy | x={x+1}")
-#             #plt.plot(w, gap[x, :], label=f"gap | x={x+1}")
-#             #plt.plot(w, mxv[x, :], label=f"max | x={x+1}")
-            
-#     plt.xlabel(xlabel)
-#     plt.ylabel("value")
-#     plt.title("negentropy / gap / max vs w (all x)")
-#     plt.ylim(0.0, 1.0)  # all three stats are in [0,1]
-#     plt.legend(loc="best", ncol=2)
-#     return fig
-
-# -----------------------------------------------------------------------------
-# FULL-W stats (curves vs w) for posterior p(a|w): negentropy, max, gap
-# -----------------------------------------------------------------------------
-# def compute_pagw_stats_over_w(pagw: np.ndarray):
-#     """
-#     Compute statistics of p(a|w) across *all* w (no sub-sampling).
-#     Input:
-#       pagw: (A, N) posterior over actions per w
-#     Returns dict with (N,) arrays:
-#       - 'negentropy01' : min–max normalized over w: 1 - H(p(a|w))/ln(A)  ∈ [0,1]
-#       - 'maxval'       : max_a p(a|w)                                   ∈ [1/A,1] (raw, NOT normalized)
-#       - 'gap'          : top1 - top2                                    ∈ [0,1]   (0 if A<2)
-#       - 'entropy'      : H(p(a|w))                                      in nats
-#     """
-#     A, N = pagw.shape
-#     P = np.clip(pagw, EPS, 1.0)              # (A, N)
-#     H = -np.sum(P * np.log(P), axis=0)       # (N,)
-#     logA = np.log(float(A))
-
-#     # Negentropy (1 - H/ln A), then min–max normalize across w only
-#     neg = 1.0 - H / (logA + EPS)             # (N,)
-#     mn, mx = float(np.min(neg)), float(np.max(neg))
-#     if mx > mn + 1e-12:
-#         negentropy01 = (neg - mn) / (mx - mn)
-#     else:
-#         negentropy01 = np.zeros_like(neg)
-
-#     # top-1 and top-2 along actions for each w
-#     order = np.argsort(-P, axis=0)           # (A, N)
-#     top1 = P[order[0, :], np.arange(N)]      # (N,)
-#     if A >= 2:
-#         top2 = P[order[1, :], np.arange(N)]  # (N,)
-#         gap = top1 - top2
-#     else:
-#         gap = np.zeros_like(top1)
-
-#     maxval = top1  # raw (NOT min–max normalized)
-
-#     return dict(negentropy01=negentropy01, maxval=maxval, gap=gap, entropy=H)
-
 def compute_pagw_stats_over_w(pagw: np.ndarray):
     """
     Compute statistics of p(a|w) across *all* w (no sub-sampling).
@@ -734,14 +512,6 @@ def compute_pagw_stats_over_w(pagw: np.ndarray):
     H = -np.sum(P * np.log(P), axis=0)           # (N,)
     logA = np.log(float(A))
     negentropy01 = 1.0 - H / (logA + EPS)        # (N,)
-    # Min–max normalization over w: min -> 0, max -> 1
-    # _mn = float(np.min(negentropy01))
-    # _mx = float(np.max(negentropy01))
-    # if _mx > _mn + 1e-12:
-    #     negentropy01 = (negentropy01 - _mn) / (_mx - _mn)
-    # else:
-    #     negentropy01 = np.zeros_like(negentropy01)
-    # top-1 and top-2 along actions for each column (w)
     order = np.argsort(-P, axis=0)               # (A, N)
     top1 = P[order[0, :], np.arange(N)]          # (N,)
     if A >= 2:
@@ -794,11 +564,11 @@ def plot_pagow_stats_vs_w_combined(w: np.ndarray, stats: dict, xlabel: str = "w"
         raise ValueError(f"Length of w ({w.shape[0]}) must match stats width ({neg.shape[0]}).")
     fig = plt.figure()
     plt.plot(w, neg, label="negentropy | p(a|w)")
-    #plt.plot(w, gp,  label="gap (top1 - top2)")
-    #plt.plot(w, mx,  label="max")
+    plt.plot(w, gp,  label="gap (top1 - top2)")
+    plt.plot(w, mx,  label="max")
     plt.xlabel(xlabel)
     plt.ylabel("value")
-    plt.title("confidence of p(a|w) vs w")
+    plt.title("negentropy / gap / max of p(a|w) vs w")
     plt.ylim(0.0, 1.0)
     plt.legend(loc="best")
     return fig
@@ -816,25 +586,20 @@ def U_fn(a: int, w: float) -> float:
 # --- Run BA with history tracking on the same quadratic-utility example ---
 X = 2
 A = 3
-mu_as = np.array([-96, 0, 96])
-sigma_as = np.ones(A)*(64)
-epsilon = 64
+mu_as = np.array([-1, 0, 1])
+sigma_as = np.ones(A)*(1)
+epsilon = 0.5
 L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon
 
-beta1, beta2, beta3 = np.inf,0.72,0.63
-
-# Grid sampling for determinism
-    
+beta1, beta2, beta3 = np.inf,2.5,2
 n_samples = 300
-# w, pw = make_w_samples_gaussian(L, Uhi, n_samples, grid=True)
 w, pw = make_w_samples(L, Uhi, n_samples, grid=True)
-
 U_pre = build_U_pre(U_fn, A, w)
 
 
 res = threevar_BA_iterations(
     X=X, beta1=beta1, beta2=beta2, beta3=beta3,
-    U_pre=U_pre, pw=pw, tol=1e-10, maxiter=100,
+    U_pre=U_pre, pw=pw, tol=1e-10, maxiter=1000,
     init_pogw_uniformly=False, init_pogw_sparse=True, init_pagow_uniformly=True,
     track_history=True
 )
@@ -842,7 +607,7 @@ res = threevar_BA_iterations(
 perf_df = collect_metrics_over_history(res.history, pw, U_pre, beta1, beta2, beta3)
 
 # Show the table and plots
-print(perf_df.iloc[-1])
+print(perf_df)
 
 fig1, fig2 = plot_convergence(perf_df)
 
@@ -865,46 +630,7 @@ figs = show_prob_matrix(res.pagw, name="p*(a|w)")
 plt.show()
 
 
-# for i,fig in enumerate(show_prob_matrix(res.pagow, name="p(a|x,w)")):
-#     if i % 60 == 0:
-#       plt.show()
-    
-    
-# Compute stats on all 10 default slices
-# stats, stats_df = compute_pagow_slice_stats(res.pagow)
-
-# # Or pick explicit slice indices (e.g., first 10 w’s)
-# idx = list(range(10))
-# stats, stats_df = compute_pagow_slice_stats(res.pagow, indices=idx)
-
-# # Quick summary + preview
-# print_pagow_slice_stats_summary(stats)
-# print(stats_df.head())
-
-# --- Full-w curves vs w (combined plot) ---
-# requires the actual w grid/points used to build U_pre/pagow
-# all_stats = compute_pagow_stats_over_w(res.pagow)
-# curves_df = stats_to_df(all_stats, w)   # assumes `w` is available in scope
-# fig_all = plot_pagow_stats_vs_w_combined(w, all_stats)  # all x on one plot, all three stats
-# plt.show()
-
-
-
-
-# --- Full-w curves vs w (combined plot) ---
-# requires the actual w grid/points used to build U_pre/pagow
-# all_stats = compute_pagow_stats_over_w(res.pagow)
-# curves_df = stats_to_df(all_stats, w)   # assumes `w` is available in scope
-# fig_all = plot_pagow_stats_vs_w_combined(w, all_stats)  # all x on one plot, all three stats
-# plt.show()
-
-# --- Negentropy curve for posterior p(a|w) ---
-# --- p(a|w) stats vs w (combined plot) ---
 pagw_stats = compute_pagw_stats_over_w(res.pagw)
-
-# print("negentropy values:", pagw_stats["negentropy01"])
-# print("max values:", pagw_stats["maxval"])
-# print("gap values:", pagw_stats["gap"])
 
 
 pagw_df    = pagw_stats_df(pagw_stats, w)     # optional: inspect or save
@@ -913,12 +639,3 @@ plt.show()
 
 # Optional: tidy table
 df = pagw_stats_df(pagw_stats, w)
-#print(df.head())
-
-# # --- Full-w curves vs w (combined plot) ---
-# # requires the actual w grid/points used to build U_pre/pagow
-# all_stats = compute_pagow_stats_over_w(res.pagow)
-# curves_df = stats_to_df(all_stats, w)   # assumes `w` is available in scope
-# fig_all = plot_pagow_stats_vs_w_combined(w, all_stats)  # all x on one plot, all three stats
-# plt.show()
-
