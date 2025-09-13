@@ -16,10 +16,9 @@ def main():
     epsilon = 64
     L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon
 
-    beta1, beta2, beta3 = np.inf,0.72,0.63
-
+    beta1, beta2, beta3 = np.inf,1.2,1
     # Grid sampling for determinism
-    n_samples = 300
+    n_samples = 100
     # w, pw = make_w_samples_gaussian(L, Uhi, n_samples, grid=True)
     w, pw = make_w_samples(L, Uhi, n_samples, grid=True)
 
@@ -28,7 +27,7 @@ def main():
 
     res = threevar_BA_iterations(
         X=X, beta1=beta1, beta2=beta2, beta3=beta3,
-        U_pre=U_pre, pw=pw, tol=1e-10, maxiter=100,
+        U_pre=U_pre, pw=pw, tol=1e-10, maxiter=50,
         init_pogw_uniformly=False, init_pogw_sparse=True, init_pagow_uniformly=True,
         track_history=True
     )

@@ -260,8 +260,8 @@ def mutual_info_AO(pago, pa, po):
         total += po[x] * np.sum(pax * (np.log(pax) - np.log(np.clip(pa, EPS, 1.0))))
     return float(total)
 
-def mutual_info_AW_given_O(pagow, pago, pogw, po, pw):
-    # I(A;W|O) = sum_x p(x) E_{w|x}[ KL(p(a|x,w) || p(a|x)) ]
+def mutual_info_WA_given_O(pagow, pago, pogw, po, pw):
+    # I(W;A|O) = sum_x p(x) E_{w|x}[ KL(p(a|x,w) || p(a|x)) ]
     A, X, N = pagow.shape
     total = 0.0
     for x in range(X):
@@ -297,13 +297,13 @@ def expected_utility(U_pre, pogw, pagow, pw):
             total += pw[j] * pogw[x, j] * float(np.dot(pagow[:, x, j], U_pre[:, j]))
     return float(total)
 
-def objective_value(EU, I_ow, I_aw, I_awgo, beta1, beta2, beta3):
+def objective_value(EU, I_ow, I_ao, I_wago, beta1, beta2, beta3):
     inv_b1 = 0.0 if (beta1 is None or np.isinf(beta1)) else 1.0 / beta1
     inv_b2 = 0.0 if (beta2 is None or np.isinf(beta2)) else 1.0 / beta2
     inv_b3 = 0.0 if (beta3 is None or np.isinf(beta3)) else 1.0 / beta3
     # General/parallel composite (matches terms in update equations):
     # J = EU - (1/β1) I(X;W) - (1/β2) I(A;W) - (1/β3 - 1/β2) I(A;W|X)
-    return EU - (inv_b1 * I_ow) - (inv_b2 * I_aw) - (inv_b3 * I_awgo)
+    return EU - (inv_b1 * I_ow) - (inv_b2 * I_ao) - (inv_b3 * I_wago)
 
 def collect_metrics_over_history(history, pw, U_pre, beta1, beta2, beta3):
     rows = []
@@ -311,11 +311,11 @@ def collect_metrics_over_history(history, pw, U_pre, beta1, beta2, beta3):
         pagw = marginalizeo(pogw, pagow)
         I_ow = mutual_info_XW(pogw, po, pw)
         I_ao = mutual_info_AO(pago, pa, po)
-        I_awgo = mutual_info_AW_given_O(pagow, pago, pogw, po, pw)
+        I_wago = mutual_info_WA_given_O(pagow, pago, pogw, po, pw)
         I_aw = mutual_info_AW(pagw, pa, pw)
         EU = expected_utility(U_pre, pogw, pagow, pw)
-        J = objective_value(EU, I_ow, I_aw, I_awgo, beta1, beta2, beta3)
-        rows.append(dict(I_ow=I_ow, I_ao=I_ao, I_awgo=I_awgo, I_aw=I_aw, E_U=EU, Objective_value=J))
+        J = objective_value(EU, I_ow, I_ao, I_wago, beta1, beta2, beta3)
+        rows.append(dict(I_ow=I_ow, I_ao=I_ao, I_wago=I_wago, I_aw=I_aw, E_U=EU, Objective_value=J))
     df = pd.DataFrame(rows)
     df.index.name = "iteration"
     return df

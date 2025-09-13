@@ -36,7 +36,7 @@ def fitmodel_on_individual(exp, subject, model_type, optimize=1,savefile=True):
 
     
     print(f'Fitting exp{exp} sub{subject} model{model_type} ----- ')
-    filename_data = f'data/EXP{exp}/S{subject}_log.mat'
+    filename_data = f'li_and_ma/data/EXP{exp}/S{subject}_log.mat'
     
     # Load the data (requires scipy.io or h5py depending on file format)
     # Assuming the data is saved as a .mat file (MATLAB format)
@@ -93,46 +93,46 @@ def fitmodel_on_individual(exp, subject, model_type, optimize=1,savefile=True):
         pub = [0.2, 0.5, 1, 1.5, 1.5, 0.01]
         objFunc = lambda x: nll_diff_is(x, trl, stiPar, configpool, subject,savefile=savefile)
     
-    elif model_type == 3:
-        # Entropy model with temperature
-        # lb = [0, 0, 0, -20, -20, 0]
-        # ub = [1, 1, 1, 20, 20, 1]
-        lb = [0,   0,   0,  -20, .1,  0]
-        ub = [1.2, 1.2, 1.2, 20, 3, .05]
+    # elif model_type == 3:
+    #     # Entropy model with temperature
+    #     # lb = [0, 0, 0, -20, -20, 0]
+    #     # ub = [1, 1, 1, 20, 20, 1]
+    #     lb = [0,   0,   0,  -20, .1,  0]
+    #     ub = [1.2, 1.2, 1.2, 20, 3, .05]
         
-        # plb = [0, 0.2, 0.7, 1, 0.5, 0] # orig
-        # pub = [0.2, 0.7, 1, 1.5, 1.5, 0.2] # orig
-        plb = [0.4, 0.6, 0.8, 1, 0.5, 0]  
-        pub = [0.6, 0.8, 1, 1.5, 1.5, 0.01]
-        objFunc = lambda x: nll_en_is(x, trl, stiPar, configpool, subject, attention=False,T_update=True, savefile=savefile)
+    #     # plb = [0, 0.2, 0.7, 1, 0.5, 0] # orig
+    #     # pub = [0.2, 0.7, 1, 1.5, 1.5, 0.2] # orig
+    #     plb = [0.4, 0.6, 0.8, 1, 0.5, 0]  
+    #     pub = [0.6, 0.8, 1, 1.5, 1.5, 0.01]
+    #     objFunc = lambda x: nll_en_is(x, trl, stiPar, configpool, subject, attention=False,T_update=True, savefile=savefile)
         
-    elif model_type == 4:
-        # Entropy model with attention
-        # lb = [0, 0, 0, -20, -20, 0]
-        # ub = [1, 1, 1, 20, 20, 1]
-        lb = [0,   0,   0,  -20, .1,   0]
-        ub = [1.2, 1.2, 1.2, 20, 3, .05]  #### note T is very constrained to near 1
+    # elif model_type == 4:
+    #     # Entropy model with attention
+    #     # lb = [0, 0, 0, -20, -20, 0]
+    #     # ub = [1, 1, 1, 20, 20, 1]
+    #     lb = [0,   0,   0,  -20, .1,   0]
+    #     ub = [1.2, 1.2, 1.2, 20, 3, .05]  #### note T is very constrained to near 1
         
-        # plb = [0, 0.2, 0.7, 1, 0.5, 0] # orig
-        # pub = [0.2, 0.7, 1, 1.5, 1.5, 0.2] # orig
-        plb = [0.4, 0.6, 0.8, 1,   0.5, 0]  
-        pub = [0.6, 0.8, 1,   1.5, 1.5, 0.01]
+    #     # plb = [0, 0.2, 0.7, 1, 0.5, 0] # orig
+    #     # pub = [0.2, 0.7, 1, 1.5, 1.5, 0.2] # orig
+    #     plb = [0.4, 0.6, 0.8, 1,   0.5, 0]  
+    #     pub = [0.6, 0.8, 1,   1.5, 1.5, 0.01]
         
-        objFunc = lambda x: nll_en_is(x, trl, stiPar, configpool, subject, attention=True,T_update=False, savefile=savefile)#,attentionTestNormalisation=True)
+    #     objFunc = lambda x: nll_en_is(x, trl, stiPar, configpool, subject, attention=True,T_update=False, savefile=savefile)#,attentionTestNormalisation=True)
     
-    elif model_type == 5:
-        # Entropy model no temp no attention
-        # lb = [0, 0, 0, -20, -20, 0]
-        # ub = [1, 1, 1, 20, 20, 1]
-        lb = [0,   0,   0,  -20, .1,   0]
-        ub = [1.2, 1.2, 1.2, 20, 3, .05]  #### note T is very constrained to near 1
+    # elif model_type == 5:
+    #     # Entropy model no temp no attention
+    #     # lb = [0, 0, 0, -20, -20, 0]
+    #     # ub = [1, 1, 1, 20, 20, 1]
+    #     lb = [0,   0,   0,  -20, .1,   0]
+    #     ub = [1.2, 1.2, 1.2, 20, 3, .05]  #### note T is very constrained to near 1
         
-        # plb = [0, 0.2, 0.7, 1, 0.5, 0] # orig
-        # pub = [0.2, 0.7, 1, 1.5, 1.5, 0.2] # orig
-        plb = [0.4, 0.6, 0.8, 1,   0.9, 0]  
-        pub = [0.6, 0.8, 1,   1.5, 1.1, 0.01]
+    #     # plb = [0, 0.2, 0.7, 1, 0.5, 0] # orig
+    #     # pub = [0.2, 0.7, 1, 1.5, 1.5, 0.2] # orig
+    #     plb = [0.4, 0.6, 0.8, 1,   0.9, 0]  
+    #     pub = [0.6, 0.8, 1,   1.5, 1.1, 0.01]
         
-        objFunc = lambda x: nll_en_is(x, trl, stiPar, configpool, subject, attention=False,T_update=False, savefile=savefile)
+    #     objFunc = lambda x: nll_en_is(x, trl, stiPar, configpool, subject, attention=False,T_update=False, savefile=savefile)
 
     elif model_type == 6:
         # Difference model
@@ -265,7 +265,7 @@ if __name__ == "__main__":
   #time.sleep(60*40)
   #Experiment to fit (1,2 or 3)
   exp = 1
-  for model in [9]: #[2,4,5,6,8]:
+  for model in [1]: #[2,4,5,6,8]:
     for subject in [1,2,3,4,5,6,7,8,9,10,11,12,13]:
         #Subject to fit (There are 13 subjects in Experiment 1, 11 subjects in Experiment 2, and 11 subjects in Experiment 3)
         

@@ -8,9 +8,9 @@ EPS = 1e-16
 def plot_convergence(perf_df: pd.DataFrame, xlabel_perf: str = "Iteration"):
     # First chart: mutual informations
     fig1 = plt.figure()
-    plt.plot(perf_df.index.values, perf_df["I_ow"], label="I(X;W)")
-    plt.plot(perf_df.index.values, perf_df["I_ao"], label="I(A;X)")
-    plt.plot(perf_df.index.values, perf_df["I_awgo"], label="I(A;W|X)")
+    plt.plot(perf_df.index.values, perf_df["I_ow"], label="I(O;W)")
+    plt.plot(perf_df.index.values, perf_df["I_ao"], label="I(A;O)")
+    plt.plot(perf_df.index.values, perf_df["I_wago"], label="I(W;A|O)")
     plt.plot(perf_df.index.values, perf_df["I_aw"], label="I(A;W)")
     plt.xlabel(xlabel_perf)
     plt.ylabel("[nats]")

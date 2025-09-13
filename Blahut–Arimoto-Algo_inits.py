@@ -7,6 +7,8 @@ from typing import Tuple, Optional, Callable, Dict, Any, Union
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+from scipy.stats import norm
+
 
 EPS = 1e-16
 
@@ -217,41 +219,75 @@ class BAResult:
     pagw: np.ndarray
     history: Optional[Dict[str, Any]] = None
 
-def threevar_BA_iterations(X: int, beta1: float, beta2: float, beta3: float,
-                           U_pre: np.ndarray, pw: np.ndarray,
-                           tol: float = 1e-10, maxiter: int = 10000,
-                           init_pogw_uniformly: bool = False,
-                           init_pogw_sparse: bool = True,
-                           init_pagow_uniformly: bool = True,
-                           track_history: bool = False) -> BAResult:
+ # --- add to imports if not present ---
+from typing import Optional
+
+# --- modify the signature ---
+def threevar_BA_iterations(
+    X: int, beta1: float, beta2: float, beta3: float,
+    U_pre: np.ndarray, pw: np.ndarray,
+    tol: float = 1e-10, maxiter: int = 10000,
+    init_pogw_uniformly: bool = False,
+    init_pogw_sparse: bool = True,
+    init_pagow_uniformly: bool = True,
+    track_history: bool = False,
+    # NEW:
+    pogw0: Optional[np.ndarray] = None,
+    pago0: Optional[np.ndarray] = None,
+    pagow0: Optional[np.ndarray] = None,
+) -> BAResult:
     A, N = U_pre.shape
     assert pw.shape == (N,)
     assert np.all(pw >= 0) and abs(np.sum(pw) - 1.0) < 1e-6
-    if init_pogw_uniformly:
-        pogw = np.full((X, N), 1.0 / X)
-    elif init_pogw_sparse:
-        pogw = np.zeros((X, N))
-        ks = np.random.randint(0, X, size=N)
-        pogw[ks, np.arange(N)] = 1.0
+
+    # --- p(x|w) initialization ---
+    if pogw0 is not None:
+        pogw = np.asarray(pogw0, float)
+        assert pogw.shape == (X, N), "pogw0 must be shape (X, N)"
+        pogw = _normalize(pogw, axis=0)
     else:
-        pogw = _normalize(np.random.rand(X, N), axis=0)
-    if init_pagow_uniformly:
-        pago = np.full((A, X), 1.0 / A)
+        if init_pogw_uniformly:
+            pogw = np.full((X, N), 1.0 / X)
+        elif init_pogw_sparse:
+            pogw = np.zeros((X, N))
+            ks = np.random.randint(0, X, size=N)
+            pogw[ks, np.arange(N)] = 1.0
+        else:
+            pogw = _normalize(np.random.rand(X, N), axis=0)
+
+    # --- p(a|x,w) / p(a|x) initialization ---
+    if pagow0 is not None:
+        pagow = np.asarray(pagow0, float)
+        assert pagow.shape == (A, X, N), "pagow0 must be shape (A, X, N)"
+        pagow = _normalize(pagow, axis=0)   # normalize over 'a'
+        pago = _normalize(np.sum(pagow, axis=2), axis=0)  # p(a|x) = E_w p(a|x,w)
+    elif pago0 is not None:
+        pago = np.asarray(pago0, float)
+        assert pago.shape == (A, X), "pago0 must be shape (A, X)"
+        pago  = _normalize(pago, axis=0)
         pagow = np.repeat(pago[:, :, None], N, axis=2)
     else:
-        pago = _normalize(np.random.rand(A, X), axis=0)
-        pagow = np.repeat(pago[:, :, None], N, axis=2)
+        if init_pagow_uniformly:
+            pago = np.full((A, X), 1.0 / A)
+            pagow = np.repeat(pago[:, :, None], N, axis=2)
+        else:
+            pago = _normalize(np.random.rand(A, X), axis=0)
+            pagow = np.repeat(pago[:, :, None], N, axis=2)
+
     history = {"po": [], "pa": [], "pogw": [], "pago": [], "pagow": []} if track_history else None
     prev_pogw = pogw.copy()
     prev_pagow = pagow.copy()
+
     for it in range(1, maxiter + 1):
-        po, pa, pagw = compute_marginals(pw, pogw, pagow)
+        po, pa, pagw = compute_marginals(pw, pogw, pagow)                 # uses marginalizeo() under the hood
         pago = compute_pago_iteration(pogw, pagow, beta2, beta3, U_pre, pa, po, pw)
         pagow = compute_pagow_iteration(pago, beta2, beta3, U_pre, pa)
         pogw = compute_pogw_iteration(beta1, beta2, beta3, U_pre, pa, po, pago, pagow)
+
         delta = max(np.max(np.abs(pogw - prev_pogw)), np.max(np.abs(pagow - prev_pagow)))
         prev_pogw[...] = pogw
         prev_pagow[...] = pagow
+
         if history is not None:
             history["po"].append(po.copy())
             history["pa"].append(pa.copy())
@@ -260,6 +296,7 @@ def threevar_BA_iterations(X: int, beta1: float, beta2: float, beta3: float,
             history["pagow"].append(pagow.copy())
         if delta < tol:
             break
+
     return BAResult(po=po, pa=pa, pogw=pogw, pago=pago, pagow=pagow, pagw=pagw, history=history)
 
 def make_w_samples(L: float, Uhi: float, N: int, grid: bool = False, rng: Optional[np.random.Generator] = None) -> Tuple[np.ndarray, np.ndarray]:
@@ -381,8 +418,8 @@ def mutual_info_AO(pago, pa, po):
         total += po[x] * np.sum(pax * (np.log(pax) - np.log(np.clip(pa, EPS, 1.0))))
     return float(total)
 
-def mutual_info_WA_given_O(pagow, pago, pogw, po, pw):
-    # I(W;A|O) = sum_x p(x) E_{w|x}[ KL(p(a|x,w) || p(a|x)) ]
+def mutual_info_AW_given_O(pagow, pago, pogw, po, pw):
+    # I(A;W|O) = sum_x p(x) E_{w|x}[ KL(p(a|x,w) || p(a|x)) ]
     A, X, N = pagow.shape
     total = 0.0
     for x in range(X):
@@ -418,14 +455,14 @@ def expected_utility(U_pre, pogw, pagow, pw):
             total += pw[j] * pogw[x, j] * float(np.dot(pagow[:, x, j], U_pre[:, j]))
     return float(total)
 
-def objective_value(EU, I_ow, I_ao, I_wago, beta1, beta2, beta3):
+def objective_value(EU, I_ow, I_aw, I_awgo, beta1, beta2, beta3):
     inv_b1 = 0.0 if (beta1 is None or np.isinf(beta1)) else 1.0 / beta1
     inv_b2 = 0.0 if (beta2 is None or np.isinf(beta2)) else 1.0 / beta2
     inv_b3 = 0.0 if (beta3 is None or np.isinf(beta3)) else 1.0 / beta3
     # General/parallel composite (matches terms in update equations):
     # J = EU - (1/β1) I(X;W) - (1/β2) I(A;W) - (1/β3 - 1/β2) I(A;W|X)
-    # return EU - inv_b1 * I_ow - inv_b2 * I_aw - (inv_b3 - inv_b2) * I_wago
-    return EU - (inv_b1 * I_ow) - (inv_b2 * I_ao) - (inv_b3 * I_wago)
+    # return EU - inv_b1 * I_ow - inv_b2 * I_aw - (inv_b3 - inv_b2) * I_awgo
+    return EU - inv_b1 * I_ow - inv_b2 * I_aw - inv_b3 * I_awgo
 
 def collect_metrics_over_history(history, pw, U_pre, beta1, beta2, beta3):
     rows = []
@@ -433,11 +470,11 @@ def collect_metrics_over_history(history, pw, U_pre, beta1, beta2, beta3):
         pagw = marginalizeo(pogw, pagow)
         I_ow = mutual_info_XW(pogw, po, pw)
         I_ao = mutual_info_AO(pago, pa, po)
-        I_wago = mutual_info_WA_given_O(pagow, pago, pogw, po, pw)
+        I_awgo = mutual_info_AW_given_O(pagow, pago, pogw, po, pw)
         I_aw = mutual_info_AW(pagw, pa, pw)
         EU = expected_utility(U_pre, pogw, pagow, pw)
-        J = objective_value(EU, I_ow, I_ao, I_wago, beta1, beta2, beta3)
-        rows.append(dict(I_ow=I_ow, I_ao=I_ao, I_wago=I_wago, I_aw=I_aw, E_U=EU, Objective_value=J))
+        J = objective_value(EU, I_ow, I_aw, I_awgo, beta1, beta2, beta3)
+        rows.append(dict(I_ow=I_ow, I_ao=I_ao, I_awgo=I_awgo, I_aw=I_aw, E_U=EU, Objective_value=J))
     df = pd.DataFrame(rows)
     df.index.name = "iteration"
     return df
@@ -445,9 +482,9 @@ def collect_metrics_over_history(history, pw, U_pre, beta1, beta2, beta3):
 def plot_convergence(perf_df: pd.DataFrame, xlabel_perf: str = "Iteration"):
     # First chart: mutual informations
     fig1 = plt.figure()
-    plt.plot(perf_df.index.values, perf_df["I_ow"], label="I(O;W)")
-    plt.plot(perf_df.index.values, perf_df["I_ao"], label="I(A;O)")
-    plt.plot(perf_df.index.values, perf_df["I_wago"], label="I(W;A|O)")
+    plt.plot(perf_df.index.values, perf_df["I_ow"], label="I(X;W)")
+    plt.plot(perf_df.index.values, perf_df["I_ao"], label="I(A;X)")
+    plt.plot(perf_df.index.values, perf_df["I_awgo"], label="I(A;W|X)")
     plt.plot(perf_df.index.values, perf_df["I_aw"], label="I(A;W)")
     plt.xlabel(xlabel_perf)
     plt.ylabel("[nats]")
@@ -792,16 +829,16 @@ def plot_pagow_stats_vs_w_combined(w: np.ndarray, stats: dict, xlabel: str = "w"
     mx  = np.asarray(stats["maxval"]).reshape(-1)
     if w.shape[0] != neg.shape[0]:
         raise ValueError(f"Length of w ({w.shape[0]}) must match stats width ({neg.shape[0]}).")
-    fig = plt.figure()
-    plt.plot(w, neg, label="negentropy | p(a|w)")
+    #fig = plt.figure()
+    #plt.plot(w, neg, label="negentropy | p(a|w)")
     #plt.plot(w, gp,  label="gap (top1 - top2)")
     #plt.plot(w, mx,  label="max")
-    plt.xlabel(xlabel)
-    plt.ylabel("value")
-    plt.title("confidence of p(a|w) vs w")
-    plt.ylim(0.0, 1.0)
-    plt.legend(loc="best")
-    return fig
+    #plt.xlabel(xlabel)
+    #plt.ylabel("value")
+    #plt.title("confidence of p(a|w) vs w")
+    #plt.ylim(0.0, 1.0)
+    #plt.legend(loc="best")
+    return neg# fig, neg
 
 def U_fn_quad(a: int, w: float) -> float:
     mu = mu_as[a-1]
@@ -812,41 +849,53 @@ def U_fn(a: int, w: float) -> float:
     sigma = sigma_as[a-1] 
     return -0.5*np.log(2*np.pi*sigma**2) - 0.5*((w - mu)**2)/(sigma**2)
 
+#########################################################################
 
 # --- Run BA with history tracking on the same quadratic-utility example ---
+
+##########################################################################
+
 X = 3
 A = 3
-mu_as = np.array([-96, -56, 96])
+mu_as = np.array([-96, -59, 96])
 sigma_as = np.ones(A)*(64)
 epsilon = 64
 epsilon2 = 64
 L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon2
 
-beta1, beta2, beta3 = np.inf,1.5,2
+beta1, beta2, beta3 = np.inf,3.65,2
 
 # Grid sampling for determinism
-    
-n_samples = 320
+#n_samples = 384 # config 2
+n_samples = 320 # config 1 and 3
+
+#n_samples = 208
 
 # w, pw = make_w_samples_gaussian(L, Uhi, n_samples, grid=True)
 w, pw = make_w_samples(L, Uhi, n_samples, grid=True)
 
 U_pre = build_U_pre(U_fn, A, w)
 
+pogw_predefined = np.load("pogw.npy")
+
+pagow_predefined =  np.load("pagow.npy")
+
 
 res = threevar_BA_iterations(
     X=X, beta1=beta1, beta2=beta2, beta3=beta3,
     U_pre=U_pre, pw=pw, tol=1e-10, maxiter=50,
     init_pogw_uniformly=False, init_pogw_sparse=True, init_pagow_uniformly=True,
-    track_history=True
-)
+    track_history=True, pogw0=None, pagow0=None)
+
 
 perf_df = collect_metrics_over_history(res.history, pw, U_pre, beta1, beta2, beta3)
 
 # Show the table and plots
-print(perf_df)
+print(perf_df.iloc[-1])
+#print(perf_df)
 
 fig1, fig2 = plot_convergence(perf_df)
+plt.show()
 
 #print("p(x|w):\n", res.pogw)
 print("p(x):", res.po)
@@ -855,21 +904,16 @@ print("p(a|x):\n", res.pago)
 print("p(a):", res.pa)
 #print("p(a|w):", res.pagw)
 
-np.save("pogw",  res.pogw)
-np.save("pagow",  res.pagow)
-
-
-
 figs = show_prob_matrix(res.pago, name="p(a|x)")
 plt.show()
 
 # Display a 3D matrix with slices
 
-for fig in show_prob_matrix(res.pogw, name="p(x|,w)"):
-    plt.show()
+#for fig in show_prob_matrix(res.pogw, name="p(x|,w)"):
+#    plt.show()
     
-figs = show_prob_matrix(res.pagw, name="p*(a|w)")
-plt.show()
+#figs = show_prob_matrix(res.pagw, name="p*(a|w)")
+#plt.show()
 
 
 # for i,fig in enumerate(show_prob_matrix(res.pagow, name="p(a|x,w)")):
@@ -915,8 +959,8 @@ pagw_stats = compute_pagw_stats_over_w(res.pagw)
 
 
 pagw_df    = pagw_stats_df(pagw_stats, w)     # optional: inspect or save
-fig_all    = plot_pagow_stats_vs_w_combined(w, pagw_stats)
-plt.show()
+neg  = plot_pagow_stats_vs_w_combined(w, pagw_stats) #fig_all, neg = ...
+#plt.show()
 
 # Optional: tidy table
 df = pagw_stats_df(pagw_stats, w)
@@ -929,3 +973,77 @@ df = pagw_stats_df(pagw_stats, w)
 # fig_all = plot_pagow_stats_vs_w_combined(w, all_stats)  # all x on one plot, all three stats
 # plt.show()
 
+
+
+# LI AND MA (2020): PLOTTING THEIR STATS FROM NORMALISED GAUSSIAN LIKELIHOODS
+X = 3
+A = 3
+
+# epsilon1 = 8 # configs 1 and 2
+# epsilon2 = 8
+
+epsilon1 = 18 # config 3
+epsilon2 = 0
+
+# epsilon1 = 0 # config 4
+# epsilon2 = 18 
+
+new_L, new_Uhi = mu_as[0] - epsilon1, mu_as[-1] + epsilon2
+
+n_samples_new = 210 # config 3
+#n_samples_new = 272 # config 2
+#n_samples_new = 208 # config 1
+
+
+# setup
+A = len(mu_as)
+
+# w grid
+new_w = np.linspace(new_L, new_Uhi, n_samples_new)  # shape (W,)
+W = new_w.size
+
+# action prior
+pa = np.full(A, 1.0 / A)
+
+# likelihoods p(w|a)
+likelihood_aw = norm.pdf(new_w[None, :], mu_as[:, None], sigma_as[:, None])
+
+# posterior over actions given w
+paw_unnorm = likelihood_aw * pa[:, None]              # A x W
+paw = paw_unnorm / np.clip(paw_unnorm.sum(axis=0, keepdims=True), 1e-300, None)
+
+# ----- stats per w -----
+eps = 1e-12
+H_w = -np.sum(paw * np.log(paw + eps), axis=0)        # entropy
+negentropy_w = np.log(A) - H_w                        # negentropy
+
+pmax_w = np.max(paw, axis=0)                          # top probability
+top2 = np.partition(paw, -2, axis=0)[-2:, :]
+gap_w = np.max(paw, axis=0) - np.min(top2, axis=0)    # top1 - top2
+
+# ----- normalization to [0,1] -----
+def normalize(arr):
+    return (arr - arr.min()) / (arr.max() - arr.min() + 1e-12)
+
+negentropy_w = normalize(negentropy_w)
+gap_w        = normalize(gap_w)
+pmax_w       = normalize(pmax_w)
+
+#neg = normalize(neg[56:-56]) # config 1
+#neg = normalize(neg[56:-56]) # config 2 (64-8)
+neg = normalize(neg[46:-64]) # config 3
+# neg = normalize(neg[64:-46]) # config 4
+#neg = normalize(neg)
+
+# ----- plot -----
+plt.figure()
+plt.plot(new_w, negentropy_w, label="negentropy (norm)")
+plt.plot(new_w, gap_w, label="gap (norm)")
+plt.plot(new_w, pmax_w, label="max (norm)")
+plt.plot(new_w, neg, label="BA ent")
+
+plt.xlabel("w")
+plt.ylabel("Normalized stat")
+plt.ylim(0.0, 1.0)
+plt.legend(loc="best")
+plt.show()
