@@ -16,7 +16,9 @@ def main():
     epsilon = 64
     L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon
 
-    beta1, beta2, beta3 = np.inf,1.2,1
+    beta1 = np.inf
+    beta2, beta3 = 1.2,1
+    
     # Grid sampling for determinism
     n_samples = 100
     # w, pw = make_w_samples_gaussian(L, Uhi, n_samples, grid=True)

@@ -319,3 +319,4 @@ def collect_metrics_over_history(history, pw, U_pre, beta1, beta2, beta3):
     df = pd.DataFrame(rows)
     df.index.name = "iteration"
     return df
+    

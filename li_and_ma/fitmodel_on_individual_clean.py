@@ -81,6 +81,13 @@ def fitmodel_on_individual(exp, subject, model_type, optimize=1,savefile=True):
         plb = [0, 0.2, 0.5, 1, 0.5, 0]
         pub = [0.2, 0.5, 1, 1.5, 1.5, 0.01]
         objFunc = lambda x: nll_diff_is(x, trl, stiPar, configpool, subject,savefile=savefile)
+        
+    elif model_type == 3:
+        # Entropy model
+        lb = [0, 0, 0, -20, -20, 0]
+        ub = [1, 1, 1, 20, 20, 1]
+        lb = [0,   0,   0,  -20, .1,   0]
+        ub = [1.2, 1.2, 1.2, 20, 3, .05]  #### note T is very constrained to near 1
     
     # Generate initial parameter values
     randseed = np.random.rand(len(plb))
@@ -122,36 +129,38 @@ def fitmodel_on_individual(exp, subject, model_type, optimize=1,savefile=True):
     print(f'nll score {fval:.1f}')
     return output
 
+def main():
+    exp = 1 # Experiment to fit (1,2,3)
+    for model in [1]:
+        for subject in [1,2,3,4,5,6,7,8,9,10,11,12,13]:
+        
+            # optimizer to use
+            optimize=1
+            savefile=False # savefile =false so doesnt save all the "attempts" by the underlying model
+            output = fitmodel_on_individual(exp, subject, model, optimize,savefile=savefile) 
+
+            models=["Max", "Diff"]
+            print("nllk ", np.round(output['nll']))
+            logdir="data/outputs/"
+            filename="NLLK_Subject_"+str(subject)+"_Model_"+ models[model-1] +".json"
+            metrics = {"NLLK": float(output['nll']), "x": output['par'].tolist(), "model": models[model-1], "ind":subject}
+            print(metrics)
+            path = logdir+filename
+            try:
+                with open(path, "w") as file:
+                    json.dump(metrics, file)         
+            except TypeError as e:
+                # Catch the TypeError if an object is not JSON serializable
+                print(f"JSON serialization failed: {e}")
+            except ValueError as e:
+                # Catch ValueError for other JSON-related issues (less common with dumping)
+                print(f"Value error during JSON operation: {e}")
+            except Exception as e:
+                # Catch any other unexpected errors
+                print(f"An unexpected error occurred: {e}")
+            except Exception as e:
+                print(f"something else went wrong: {e}") 
+
 
 if __name__ == "__main__":
-  
-  exp = 1 # Experiment to fit (1,2,3)
-  for model in [1]: # [1,2]
-    for subject in [1,2,3,4,5,6,7,8,9,10,11,12,13]:
-        
-        # optimizer to use
-        optimize=1
-        savefile=False # savefile =false so doesnt save all the "attempts" by the underlying model
-        output = fitmodel_on_individual(exp, subject, model, optimize,savefile=savefile) 
-
-        models=["Max", "Diff"]
-        print("nllk ", np.round(output['nll']))
-        logdir="data/outputs/"
-        filename="NLLK_Subject_"+str(subject)+"_Model_"+ models[model-1] +".json"
-        metrics = {"NLLK": float(output['nll']), "x": output['par'].tolist(), "model": models[model-1], "ind":subject}
-        print(metrics)
-        path = logdir+filename
-        try:
-            with open(path, "w") as file:
-                json.dump(metrics, file)         
-        except TypeError as e:
-            # Catch the TypeError if an object is not JSON serializable
-            print(f"JSON serialization failed: {e}")
-        except ValueError as e:
-            # Catch ValueError for other JSON-related issues (less common with dumping)
-            print(f"Value error during JSON operation: {e}")
-        except Exception as e:
-            # Catch any other unexpected errors
-            print(f"An unexpected error occurred: {e}")
-        except Exception as e:
-            print(f"something else went wrong: {e}") 
+    main()

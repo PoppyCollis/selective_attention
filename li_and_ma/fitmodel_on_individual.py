@@ -53,8 +53,6 @@ def fitmodel_on_individual(exp, subject, model_type, optimize=1,savefile=True):
         'theta' : trl[0][0][5]
         }
     
-    
-    
     # Select configurations to fit
     if exp in [1, 3]:
         configpool = list(range(1,5)) #was 1-5

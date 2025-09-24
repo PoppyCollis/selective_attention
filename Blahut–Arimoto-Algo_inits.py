@@ -863,11 +863,10 @@ epsilon = 64
 epsilon2 = 64
 L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon2
 
-beta1, beta2, beta3 = np.inf,3.65,2
-
+beta1, beta2, beta3 = np.inf,2,3.5
 # Grid sampling for determinism
 #n_samples = 384 # config 2
-n_samples = 320 # config 1 and 3
+n_samples = 320 # config 1 and 3    
 
 #n_samples = 208
 

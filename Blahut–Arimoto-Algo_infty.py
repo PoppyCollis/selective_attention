@@ -816,17 +816,19 @@ def U_fn(a: int, w: float) -> float:
 # --- Run BA with history tracking on the same quadratic-utility example ---
 X = 3
 A = 3
-mu_as = np.array([-96, -56, 96])
+mu_as = np.array([-128, 0, 128])
 sigma_as = np.ones(A)*(64)
 epsilon = 64
 epsilon2 = 64
 L, Uhi = mu_as[0] - epsilon, mu_as[-1] + epsilon2
 
-beta1, beta2, beta3 = np.inf,1.5,2
+#beta1, beta2, beta3 = np.inf,2,3.4 # -5.24 # 5.48 1 model dominant
+
+beta1, beta2, beta3 = np.inf,0.5,1.5 # 5.6 # -5.37 5.47 1 model dominant smooth and continuous in one strategy obviously.
 
 # Grid sampling for determinism
     
-n_samples = 320
+n_samples = 300
 
 # w, pw = make_w_samples_gaussian(L, Uhi, n_samples, grid=True)
 w, pw = make_w_samples(L, Uhi, n_samples, grid=True)
@@ -836,7 +838,7 @@ U_pre = build_U_pre(U_fn, A, w)
 
 res = threevar_BA_iterations(
     X=X, beta1=beta1, beta2=beta2, beta3=beta3,
-    U_pre=U_pre, pw=pw, tol=1e-10, maxiter=50,
+    U_pre=U_pre, pw=pw, tol=1e-10, maxiter=100,
     init_pogw_uniformly=False, init_pogw_sparse=True, init_pagow_uniformly=True,
     track_history=True
 )
